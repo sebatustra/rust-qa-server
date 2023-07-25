@@ -2,11 +2,12 @@ use serde::{
     Serialize,
     Deserialize
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, num::ParseIntError};
 use warp::{
     Filter,
     Rejection,
     Reply,
+    reject::Reject,
     http::StatusCode,
     http::Method,
     filters::cors::CorsForbidden,
@@ -40,13 +41,85 @@ struct Question {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash, Deserialize)]
 struct QuestionId(String);
 
-async fn get_questions(store: Store) -> Result<impl Reply, Rejection> {
-    let res: Vec<Question> = store.questions.values().cloned().collect();
-    Ok(warp::reply::json(&res))
+#[derive(Debug)]
+struct Pagination {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug)]
+enum Error {
+    ParseError(std::num::ParseIntError),
+    MissingParameters,
+    OutOfBounds,
+    StartLargerThanEnd
+}
+
+impl Reject for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::ParseError(err) => {
+                write!(f, "cannot parse parameter: {}", err)
+            },
+            Error::MissingParameters => write!(f, "Missing parameter."),
+            Error::OutOfBounds => write!(f, "Index out of bounds."),
+            Error::StartLargerThanEnd => write!(f, "Start larger than end.")
+        }
+    }
+}
+
+fn extract_pagination (
+    params: HashMap<String, String>,
+) -> Result<Pagination, Error> {
+    if params.contains_key("start") && params.contains_key("end") {
+        return Ok( Pagination {
+            start: params
+                .get("start")
+                .unwrap()
+                .parse::<usize>()
+                .map_err(Error::ParseError)?,
+            end: params
+                .get("end")
+                .unwrap()
+                .parse::<usize>()
+                .map_err(Error::ParseError)?
+        })
+    }
+    Err(Error::MissingParameters)
+}
+
+
+
+async fn get_questions(
+    params: HashMap<String,
+    String>,store: Store
+) -> Result<impl Reply, Rejection> {
+    if !params.is_empty() {
+        let pagination = extract_pagination(params)?;
+        if pagination.start > pagination.end {
+            return Err(Error::StartLargerThanEnd.into())
+        }
+        let res: Vec<Question> = store.questions.values().cloned().collect();
+        if pagination.end > res.len() {
+            return Err(Error::OutOfBounds.into())
+        }
+        let res = &res[pagination.start..pagination.end];
+        Ok(warp::reply::json(&res))
+    } else {
+        let res: Vec<Question> = store.questions.values().cloned().collect();
+        Ok(warp::reply::json(&res))
+    }
 }
 
 async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
-    if let Some(error) = r.find::<CorsForbidden>() {
+    if let Some(error) = r.find::<Error>() {
+        Ok(warp::reply::with_status(
+            error.to_string(),
+            StatusCode::RANGE_NOT_SATISFIABLE,
+        ))
+    } else if let Some(error) = r.find::<CorsForbidden>() {
         Ok(warp::reply::with_status(
         error.to_string(),
         StatusCode::FORBIDDEN,
@@ -76,6 +149,7 @@ async fn main() {
     let get_items = warp::get()
         .and(warp::path("questions"))
         .and(warp::path::end())
+        .and(warp::query())
         .and(store_filter)
         .and_then(get_questions)
         .recover(return_error);
