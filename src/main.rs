@@ -2,7 +2,7 @@ use serde::{
     Serialize,
     Deserialize
 };
-use std::{collections::HashMap, num::ParseIntError};
+use std::collections::HashMap;
 use warp::{
     Filter,
     Rejection,
@@ -10,18 +10,20 @@ use warp::{
     reject::Reject,
     http::StatusCode,
     http::Method,
-    filters::cors::CorsForbidden,
+    filters::{cors::CorsForbidden, body::BodyDeserializeError,},
 };
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Clone)]
 struct Store {
-    questions: HashMap<QuestionId, Question>,
+    questions: Arc<RwLock<HashMap<QuestionId, Question>>>,
 }
 
 impl Store {
     fn new() -> Self {
         Store {
-            questions: Self::init(),
+            questions: Arc::new(RwLock::new(Self::init())),
         }
     }
     fn init() -> HashMap<QuestionId, Question> {
@@ -52,7 +54,8 @@ enum Error {
     ParseError(std::num::ParseIntError),
     MissingParameters,
     OutOfBounds,
-    StartLargerThanEnd
+    StartLargerThanEnd,
+    QuestionNotFound
 }
 
 impl Reject for Error {}
@@ -65,7 +68,8 @@ impl std::fmt::Display for Error {
             },
             Error::MissingParameters => write!(f, "Missing parameter."),
             Error::OutOfBounds => write!(f, "Index out of bounds."),
-            Error::StartLargerThanEnd => write!(f, "Start larger than end.")
+            Error::StartLargerThanEnd => write!(f, "Start larger than end."),
+            Error::QuestionNotFound => write!(f, "Question not found"),
         }
     }
 }
@@ -90,7 +94,31 @@ fn extract_pagination (
     Err(Error::MissingParameters)
 }
 
+async fn add_question(
+    store: Store,
+    question: Question
+) -> Result<impl Reply, Rejection> {
+    store.questions.write().await.insert(question.id.clone(), question);
+    Ok(warp::reply::with_status(
+        "Question added",
+        StatusCode::OK
+    ))
+}
 
+async fn update_question(
+    id: String,
+    store: Store,
+    question: Question
+) -> Result<impl Reply, Rejection> {
+    match store.questions.write().await.get_mut(&QuestionId(id)) {
+        Some(q) => *q = question,
+        None => return Err(Error::QuestionNotFound.into())
+    }
+    Ok(warp::reply::with_status(
+        "Question modified",
+        StatusCode::OK,
+    ))
+}
 
 async fn get_questions(
     params: HashMap<String,
@@ -101,14 +129,14 @@ async fn get_questions(
         if pagination.start > pagination.end {
             return Err(Error::StartLargerThanEnd.into())
         }
-        let res: Vec<Question> = store.questions.values().cloned().collect();
+        let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
         if pagination.end > res.len() {
             return Err(Error::OutOfBounds.into())
         }
         let res = &res[pagination.start..pagination.end];
         Ok(warp::reply::json(&res))
     } else {
-        let res: Vec<Question> = store.questions.values().cloned().collect();
+        let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
         Ok(warp::reply::json(&res))
     }
 }
@@ -123,6 +151,11 @@ async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
         Ok(warp::reply::with_status(
         error.to_string(),
         StatusCode::FORBIDDEN,
+        ))
+    } else if let Some(error) = r.find::<BodyDeserializeError>() {
+        Ok(warp::reply::with_status(
+            error.to_string(),
+            StatusCode::UNPROCESSABLE_ENTITY,
         ))
     } else {
         Ok(warp::reply::with_status(
@@ -146,18 +179,38 @@ async fn main() {
             &[Method::PUT, Method::DELETE, Method::GET, Method::POST]
         );
 
-    let get_items = warp::get()
+    let get_questions =
+        warp::get()
         .and(warp::path("questions"))
         .and(warp::path::end())
         .and(warp::query())
-        .and(store_filter)
-        .and_then(get_questions)
-        .recover(return_error);
+        .and(store_filter.clone())
+        .and_then(get_questions);
 
+    let add_questions =
+        warp::post()
+        .and(warp::path("questions"))
+        .and(warp::path::end())
+        .and(store_filter.clone())
+        .and(warp::body::json())
+        .and_then(add_question);
+
+    let update_question =
+        warp::put()
+        .and(warp::path("questions"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(store_filter.clone())
+        .and(warp::body::json())
+        .and_then(update_question);
 
     let routes =
-        get_items
-        .with(cors);
+        get_questions
+        .or(add_questions)
+        .or(update_question)
+        .with(cors)
+        .recover(return_error);
+
 
     warp::serve(routes)
         .run(([127, 0, 0, 1], 3030))
