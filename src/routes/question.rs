@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use warp::http::StatusCode;
+use handle_errors::Error;
 
 use crate::store::Store;
 use crate::types::pagination::extract_pagination;
 use crate::types::question::{Question, QuestionId};
-use crate::error;
 
-
+/// Route handler responsible of adding a new question to the store.
+/// Takes as parameters the store and the question struct
 pub async fn add_question(
     store: Store,
     question: Question
@@ -18,6 +19,8 @@ pub async fn add_question(
     ))
 }
 
+/// Route handler responsible of updating a question, based on its id.
+/// Takes as parameters the question id, the store, and the (new) question struct.
 pub async fn update_question(
     id: String,
     store: Store,
@@ -25,7 +28,7 @@ pub async fn update_question(
 ) -> Result<impl warp::Reply, warp::Rejection> {
     match store.questions.write().await.get_mut(&QuestionId(id)) {
         Some(q) => *q = question,
-        None => return Err(error::Error::QuestionNotFound.into())
+        None => return Err(Error::QuestionNotFound.into())
     }
     Ok(warp::reply::with_status(
         "Question modified",
@@ -33,35 +36,43 @@ pub async fn update_question(
     ))
 }
 
+/// Route handler responsible of deleting a question, based on its id.
+/// Takes as parameters the question id and the store.
 pub async fn delete_question(
     id: String,
     store: Store
 ) -> Result<impl warp::Reply, warp::Rejection> {
     match store.questions.write().await.remove_entry(&QuestionId(id)) {
-        Some((id, _)) => return Ok(warp::reply::with_status(
+        Some((id, _)) => Ok(warp::reply::with_status(
             format!("Question with id {} removed", id.0),
             StatusCode::OK,
         )),
-        None => return Err(error::Error::QuestionNotFound.into())
+        None => Err(Error::QuestionNotFound.into())
     }
 }
 
+/// Route handler responsible of returing questions, based on the query params.
+/// Takes as parameters the params (HashMap) and the store.
 pub async fn get_questions(
-    params: HashMap<String,
-    String>,store: Store
+    params: HashMap<String, String>,
+    store: Store,
+	id: String
 ) -> Result<impl warp::Reply, warp::Rejection> {
+	log::info!("{} Start querying questions", id);
     if !params.is_empty() {
         let pagination = extract_pagination(params)?;
+		log::info!("{} Pagination set {:?}", id, &pagination);
         if pagination.start > pagination.end {
-            return Err(error::Error::StartLargerThanEnd.into())
+            return Err(Error::StartLargerThanEnd.into())
         }
         let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
         if pagination.end > res.len() {
-            return Err(error::Error::OutOfBounds.into())
+            return Err(Error::OutOfBounds.into())
         }
         let res = &res[pagination.start..pagination.end];
         Ok(warp::reply::json(&res))
     } else {
+		log::info!("{} No pagination used", id);
         let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
         Ok(warp::reply::json(&res))
     }
