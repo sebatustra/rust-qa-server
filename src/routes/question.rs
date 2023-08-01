@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use tracing::{instrument, info};
 use warp::http::StatusCode;
 use handle_errors::Error;
 
@@ -53,15 +54,15 @@ pub async fn delete_question(
 
 /// Route handler responsible of returing questions, based on the query params.
 /// Takes as parameters the params (HashMap) and the store.
+#[instrument]
 pub async fn get_questions(
     params: HashMap<String, String>,
     store: Store,
-	id: String
 ) -> Result<impl warp::Reply, warp::Rejection> {
-	log::info!("{} Start querying questions", id);
+	info!("Querying questions");
     if !params.is_empty() {
         let pagination = extract_pagination(params)?;
-		log::info!("{} Pagination set {:?}", id, &pagination);
+		info!(pagination = true);
         if pagination.start > pagination.end {
             return Err(Error::StartLargerThanEnd.into())
         }
@@ -72,7 +73,7 @@ pub async fn get_questions(
         let res = &res[pagination.start..pagination.end];
         Ok(warp::reply::json(&res))
     } else {
-		log::info!("{} No pagination used", id);
+		info!(pagination = false);
         let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
         Ok(warp::reply::json(&res))
     }
