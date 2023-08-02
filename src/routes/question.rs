@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use tracing::{instrument, info};
+use tracing::{instrument, info, event, Level};
 use warp::http::StatusCode;
 use handle_errors::Error;
 
 use crate::store::Store;
 use crate::types::pagination::extract_pagination;
+use crate::types::pagination::Pagination;
 use crate::types::question::{Question, QuestionId};
 
 /// Route handler responsible of adding a new question to the store.
@@ -23,7 +24,7 @@ pub async fn add_question(
 /// Route handler responsible of updating a question, based on its id.
 /// Takes as parameters the question id, the store, and the (new) question struct.
 pub async fn update_question(
-    id: String,
+    id: i32,
     store: Store,
     question: Question
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -40,7 +41,7 @@ pub async fn update_question(
 /// Route handler responsible of deleting a question, based on its id.
 /// Takes as parameters the question id and the store.
 pub async fn delete_question(
-    id: String,
+    id: i32,
     store: Store
 ) -> Result<impl warp::Reply, warp::Rejection> {
     match store.questions.write().await.remove_entry(&QuestionId(id)) {
@@ -59,22 +60,23 @@ pub async fn get_questions(
     params: HashMap<String, String>,
     store: Store,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-	info!("Querying questions");
+	event!(target: "practical_rust_book", Level::INFO, "querying questions");
+ 	let mut pagination = Pagination::default();
+
     if !params.is_empty() {
-        let pagination = extract_pagination(params)?;
-		info!(pagination = true);
-        if pagination.start > pagination.end {
-            return Err(Error::StartLargerThanEnd.into())
-        }
-        let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
-        if pagination.end > res.len() {
-            return Err(Error::OutOfBounds.into())
-        }
-        let res = &res[pagination.start..pagination.end];
-        Ok(warp::reply::json(&res))
-    } else {
-		info!(pagination = false);
-        let res: Vec<Question> = store.questions.read().await.values().cloned().collect();
-        Ok(warp::reply::json(&res))
-    }
+		event!(Level::INFO, pagination = true);
+		pagination = extract_pagination(params)?;
+	}
+	info!(pagination = false);
+	let res: Vec<Question> = match store
+		.get_questions(pagination.limit, pagination.offset)
+		.await {
+			Ok(res) => res,
+			Err(_e) => {
+				return Err(warp::reject::custom(
+					Error::DatabaseQueryError
+				))
+			},
+	};
+	Ok(warp::reply::json(&res))
 }

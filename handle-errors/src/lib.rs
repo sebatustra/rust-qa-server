@@ -15,7 +15,8 @@ pub enum Error {
     MissingParameters,
     OutOfBounds,
     StartLargerThanEnd,
-    QuestionNotFound
+    QuestionNotFound,
+	DatabaseQueryError,
 }
 
 impl Reject for Error {}
@@ -30,6 +31,9 @@ impl std::fmt::Display for Error {
             Error::OutOfBounds => write!(f, "Index out of bounds."),
             Error::StartLargerThanEnd => write!(f, "Start larger than end."),
             Error::QuestionNotFound => write!(f, "Question not found"),
+			Error::DatabaseQueryError => {
+				write!(f, "Query could not be executed")
+			}
         }
     }
 }
