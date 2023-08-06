@@ -6,19 +6,19 @@ use handle_errors::Error;
 use crate::store::Store;
 use crate::types::pagination::extract_pagination;
 use crate::types::pagination::Pagination;
-use crate::types::question::{Question, QuestionId};
+use crate::types::question::{Question, NewQuestion};
 
 /// Route handler responsible of adding a new question to the store.
 /// Takes as parameters the store and the question struct
 pub async fn add_question(
     store: Store,
-    question: Question
+    new_question: NewQuestion
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    store.questions.write().await.insert(question.id.clone(), question);
-    Ok(warp::reply::with_status(
-        "Question added",
-        StatusCode::OK
-    ))
+    if let Err(_e) = store.add_question(new_question).await {
+		return Err(warp::reject::custom(Error::DatabaseQueryError));
+	}
+
+	Ok(warp::reply::with_status("question added", StatusCode::OK))
 }
 
 /// Route handler responsible of updating a question, based on its id.
@@ -28,14 +28,13 @@ pub async fn update_question(
     store: Store,
     question: Question
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match store.questions.write().await.get_mut(&QuestionId(id)) {
-        Some(q) => *q = question,
-        None => return Err(Error::QuestionNotFound.into())
-    }
-    Ok(warp::reply::with_status(
-        "Question modified",
-        StatusCode::OK,
-    ))
+    let res = match store.update_question(question, id).await {
+		Ok(res) => res,
+		Err(_e) => return
+			Err(warp::reject::custom(Error::DatabaseQueryError)),
+	};
+
+	Ok(warp::reply::json(&res))
 }
 
 /// Route handler responsible of deleting a question, based on its id.
@@ -44,13 +43,13 @@ pub async fn delete_question(
     id: i32,
     store: Store
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match store.questions.write().await.remove_entry(&QuestionId(id)) {
-        Some((id, _)) => Ok(warp::reply::with_status(
-            format!("Question with id {} removed", id.0),
-            StatusCode::OK,
-        )),
-        None => Err(Error::QuestionNotFound.into())
-    }
+    if let Err(_e) = store.delete_question(id).await {
+		return Err(warp::reject::custom(Error::DatabaseQueryError))
+	}
+	Ok(warp::reply::with_status(
+		format!("Question {} deleted", id),
+		StatusCode::OK)
+	)
 }
 
 /// Route handler responsible of returing questions, based on the query params.
