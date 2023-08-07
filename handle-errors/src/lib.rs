@@ -8,6 +8,7 @@ use warp::{
     Reply,
     http::StatusCode
 };
+use tracing::{event, Level};
 
 #[derive(Debug)]
 pub enum Error {
@@ -15,7 +16,6 @@ pub enum Error {
     MissingParameters,
     OutOfBounds,
     StartLargerThanEnd,
-    QuestionNotFound,
 	DatabaseQueryError,
 }
 
@@ -30,16 +30,21 @@ impl std::fmt::Display for Error {
             Error::MissingParameters => write!(f, "Missing parameter."),
             Error::OutOfBounds => write!(f, "Index out of bounds."),
             Error::StartLargerThanEnd => write!(f, "Start larger than end."),
-            Error::QuestionNotFound => write!(f, "Question not found"),
 			Error::DatabaseQueryError => {
-				write!(f, "Query could not be executed")
+				write!(f, "Cannot update, invalid data.")
 			}
         }
     }
 }
 
 pub async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
-    if let Some(error) = r.find::<Error>() {
+	if let Some(crate::Error::DatabaseQueryError) = r.find() {
+		event!(Level::ERROR, "Database query error");
+		Ok(warp::reply::with_status(
+ 		crate::Error::DatabaseQueryError.to_string(),
+			StatusCode::UNPROCESSABLE_ENTITY,
+		))
+	} else if let Some(error) = r.find::<Error>() {
         Ok(warp::reply::with_status(
             error.to_string(),
             StatusCode::RANGE_NOT_SATISFIABLE,

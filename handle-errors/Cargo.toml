@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 warp = "0.3"
 sqlx = { versions = "0.6", features = [ "runtime-tokio-rustls"] }
+tracing= { version = "0.1", features = ["log"] }

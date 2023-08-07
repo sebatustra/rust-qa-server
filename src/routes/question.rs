@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use tracing::{instrument, info, event, Level};
 use warp::http::StatusCode;
-use handle_errors::Error;
 
 use crate::store::Store;
 use crate::types::pagination::extract_pagination;
@@ -14,11 +13,11 @@ pub async fn add_question(
     store: Store,
     new_question: NewQuestion
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    if let Err(_e) = store.add_question(new_question).await {
-		return Err(warp::reject::custom(Error::DatabaseQueryError));
+    match store.add_question(new_question).await {
+		Ok(_) => Ok(warp::reply::with_status("question added", StatusCode::OK)),
+		Err(e) => Err(warp::reject::custom(e))
 	}
 
-	Ok(warp::reply::with_status("question added", StatusCode::OK))
 }
 
 /// Route handler responsible of updating a question, based on its id.
@@ -28,13 +27,10 @@ pub async fn update_question(
     store: Store,
     question: Question
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let res = match store.update_question(question, id).await {
-		Ok(res) => res,
-		Err(_e) => return
-			Err(warp::reject::custom(Error::DatabaseQueryError)),
-	};
-
-	Ok(warp::reply::json(&res))
+    match store.update_question(question, id).await {
+		Ok(res) => Ok(warp::reply::json(&res)),
+		Err(e) => Err(warp::reject::custom(e))
+	}
 }
 
 /// Route handler responsible of deleting a question, based on its id.
@@ -43,13 +39,13 @@ pub async fn delete_question(
     id: i32,
     store: Store
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    if let Err(_e) = store.delete_question(id).await {
-		return Err(warp::reject::custom(Error::DatabaseQueryError))
+    match store.delete_question(id).await {
+		Ok(_) => Ok(warp::reply::with_status(
+			format!("Question {} deleted", id),
+			StatusCode::OK)
+		),
+		Err(e) => Err(warp::reject::custom(e))
 	}
-	Ok(warp::reply::with_status(
-		format!("Question {} deleted", id),
-		StatusCode::OK)
-	)
 }
 
 /// Route handler responsible of returing questions, based on the query params.
@@ -67,15 +63,8 @@ pub async fn get_questions(
 		pagination = extract_pagination(params)?;
 	}
 	info!(pagination = false);
-	let res: Vec<Question> = match store
-		.get_questions(pagination.limit, pagination.offset)
-		.await {
-			Ok(res) => res,
-			Err(_e) => {
-				return Err(warp::reject::custom(
-					Error::DatabaseQueryError
-				))
-			},
-	};
-	Ok(warp::reply::json(&res))
+	 match store.get_questions(pagination.limit, pagination.offset).await {
+			Ok(res) => Ok(warp::reply::json(&res)),
+			Err(e) => Err(warp::reject::custom(e))
+		}
 }
