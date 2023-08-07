@@ -14,10 +14,16 @@ mod routes;
 async fn main() -> Result<(), sqlx::Error>{
 	let log_filter = std::env::var("RUST_LOG")
 		.unwrap_or_else(|_|
-			"practical_rust_book=info,warp=error".to_owned()
+			"practical_rust_book=info,warp=error,handle_errors=warn".to_owned()
 		);
 
     let store = store::Store::new("postgres://postgres:mysecretpassword@localhost:5432/rustwebdev").await;
+
+	sqlx::migrate!()
+		.run(&store.clone().connection)
+		.await
+		.expect("Cannot run migration");
+
     let store_filter = warp::any()
         .map(move || store.clone());
 
